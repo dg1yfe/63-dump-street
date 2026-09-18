@@ -1,0 +1,8 @@
+# macOS
+.DS_Store
+
+# tabasm build products
+*.bin
+*.lst
+*.exp
+*.sym
