@@ -332,8 +332,17 @@ static void drain_uart(void) {
         // The PL011 reports per-character errors in the top of the data
         // register. A framing count above zero is the signature of a baud
         // mismatch, which otherwise looks exactly like a chip returning junk.
-        if (dr & UART_UARTDR_FE_BITS) rig.uart_framing++;
         if (dr & UART_UARTDR_OE_BITS) rig.uart_overrun++;
+        if (dr & UART_UARTDR_FE_BITS) {
+            // A framing error is not a character, so do not keep it. These are
+            // real: GP17 floats until the dumper sets TE and the 6301 takes
+            // the pin over, and a floating line looks like a start bit. The
+            // window scales with the clock - at 750 kHz a third of all dumps
+            // picked one up, against 2 in 30 at 1 MHz - and the junk byte
+            // lands at the front, shifting the whole dump by one.
+            rig.uart_framing++;
+            continue;
+        }
         capture_put((uint8_t)dr);
     }
 }
