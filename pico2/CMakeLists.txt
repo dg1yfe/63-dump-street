@@ -22,7 +22,7 @@ set(PICO_PLATFORM rp2350-arm-s CACHE STRING "Platform")
 
 include(pico_sdk_import.cmake)
 
-project(hd6301dump C CXX ASM)
+project(63-dump-street C CXX ASM)
 
 set(CMAKE_C_STANDARD 11)
 

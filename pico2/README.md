@@ -1,4 +1,4 @@
-# HD6301 dump rig — Pico 2 side
+# 63 Dump Street — the Pico 2 side
 
 A Raspberry Pi Pico 2 generates the HD6301V1's clock and reset, emulates its
 whole 64 KB external address space over the multiplexed bus, captures whatever
