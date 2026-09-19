@@ -186,9 +186,24 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build          # -> build/src/hd6301dump.uf2
 ```
 
-The built-in memory image is part 1 (`../6301/romdump.asm`), assembled by the
-build with `tabasm` and converted by `tools/bin2c.py`. Editing the assembly
-rebuilds the firmware.
+No environment setup is needed: the extension block at the top of
+`CMakeLists.txt` points the build at `~/.pico-sdk/sdk/2.3.0` itself, so
+`PICO_SDK_PATH` does not have to be exported. `tabasm` does have to be on
+PATH — the build assembles part 1 (`../6301/romdump.asm`) and converts it with
+`tools/bin2c.py` into the firmware's built-in memory image, so editing the
+assembly rebuilds the firmware.
+
+Flashing, either way round:
+
+```sh
+# hold BOOTSEL while plugging in, then
+cp build/src/hd6301dump.uf2 /Volumes/RP2350
+
+# or, with the board already running
+~/.pico-sdk/picotool/2.3.0/picotool/picotool load -fx build/src/hd6301dump.uf2
+```
+
+`picotool` is not on PATH; it ships inside the VS Code extension's SDK.
 
 ## Testing without hardware
 
