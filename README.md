@@ -24,7 +24,8 @@ with PIO, captures the SCI output into a buffer, and exposes it all over one
 USB CDC: Intel HEX in to load programs, commands to halt, reset and `g <addr>`,
 and Intel HEX or raw binary out. `k <hz>` retunes the target's clock at
 runtime — unclamped, so it can be walked below the datasheet floor to watch a
-dynamic core lose its state.
+dynamic core lose its state — and `n` pulses NMI, for variants where the
+vectors are external and an interrupt is the way in.
 
 See [`pico2/README.md`](pico2/README.md) for the wiring table, the protocol,
 and why RES and EXTAL are open-drain while everything else is direct.

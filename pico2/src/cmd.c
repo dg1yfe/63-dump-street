@@ -197,6 +197,7 @@ static void status(void) {
     printf("bus      %s, %u cycles, last addr %04X\n",
            rig.as_seen ? "active" : "no activity",
            (unsigned)target_bus_cycles(), (unsigned)target_last_addr());
+    printf("nmi      %u issued\n", (unsigned)rig.nmi_count);
     // The achieved rate, not the requested one: everything downstream depends
     // on it, and a divisor that did not come out exact shows up here.
     uint32_t e = rig.extal_hz / 4u;
@@ -224,6 +225,7 @@ static void help(void) {
     puts("b         read the capture back as binary after a LEN <n> line");
     puts("c         clear the capture buffer");
     puts("k <hz>    retune EXTAL (decimal Hz) and halt; the SCI rate follows");
+    puts("n [cyc]   pulse NMI low for <cyc> E cycles (default 4)");
 }
 
 // --- dispatch ---------------------------------------------------------------
@@ -274,6 +276,14 @@ static void do_line(void) {
         printf("OK EXTAL %u Hz, halted\n", (unsigned)target_set_extal(a));
         status();
         break;
+
+    case 'n': {
+        uint32_t cyc = dec_arg(line + 1, &a) ? a : 0u;
+        uint32_t us  = target_nmi(cyc);
+        printf("OK NMI pulsed %u us%s\n", (unsigned)us,
+               target_running() ? "" : " (target halted - it will not be seen)");
+        break;
+    }
 
     case 's': status(); break;
     case 'd': hex_out(hex_arg(line + 1, &a) ? a : 0xF000u); break;

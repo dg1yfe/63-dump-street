@@ -171,6 +171,23 @@ def main():
     check("above 1 MHz warns about duty",
           "warn     EXTAL above 1 MHz" in out, out.strip())
 
+    print("NMI pulses, width in E cycles so it tracks the clock")
+    out = run("k 1000000\nn\n").decode()
+    check("default is 4 E cycles at 250 kHz = 16 us",
+          "OK NMI pulsed 16 us" in out, out.strip())
+    check("halted target is called out",
+          "target halted - it will not be seen" in out, out.strip())
+
+    out = run("k 1000000\nn 100\n").decode()
+    check("explicit width honoured", "OK NMI pulsed 400 us" in out, out.strip())
+
+    out = run("k 1144\nn\n").decode()
+    check("width scales to the 286 Hz floor",
+          "OK NMI pulsed 13987 us" in out, out.strip())
+
+    out = run("k 1000000\nn\nn\ns\n").decode()
+    check("pulses are counted", "nmi      2 issued" in out, out.strip())
+
     print("status and unknown commands")
     out = run("s\n").decode()
     check("status reports halted", "state    halted" in out, out.strip())

@@ -16,6 +16,7 @@
 .define PUBLIC PIN_RW       19      ; GP19       SC2, read/write
 .define PUBLIC PIN_EXTAL    20      ; GP20       EXTAL, open drain
 .define PUBLIC PIN_RES      21      ; GP21       RES, open drain
+.define PUBLIC PIN_NMI      22      ; GP22       NMI, push-pull (VIH is 2.0 V)
 
 ; ---------------------------------------------------------------------------
 ; extal_clk - open-drain square wave for EXTAL.

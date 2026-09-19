@@ -22,6 +22,11 @@ own mask ROM.
 | GP19 | in | SC2 = R/W | 38 |
 | GP20 | open-drain | EXTAL, 1 MHz, **680 Ω to +5 V** | 3 |
 | GP21 | open-drain | RES, **pull-up to +5 V** | 6 |
+| GP22 | push-pull | NMI | 4 |
+
+NMI is push-pull, unlike the other two Pico outputs: it is an "Other Input" at
+V<sub>IH</sub> = 2.0 V, which 3.3 V clears easily, so it needs no pull-up and —
+more to the point — can never be left floating into a spurious interrupt.
 
 Straps: P20/P21/P22 (pins 8, 9, 10) to GND for mode 0. XTAL (pin 2) left open,
 as §2.9 requires when EXTAL is driven externally. Verify Vcc/Vss/STBY against
@@ -72,6 +77,7 @@ a response and no framing or escaping is needed anywhere.
 | `b` | read the capture back as binary after a `LEN <n>` line |
 | `c` | clear the capture buffer |
 | `k <hz>` | retune EXTAL (decimal Hz) and halt; the SCI rate follows |
+| `n [cyc]` | pulse NMI low for `<cyc>` E cycles (default 4) |
 | `?` | command summary |
 
 Addresses are hex, frequencies decimal.
@@ -90,6 +96,32 @@ mismatch, which otherwise looks exactly like a chip returning garbage.
 they say whether it is alive: a running CPU advances both, and one that has
 reached `SLP` stops issuing cycles entirely, so a frozen count is the normal
 end of a dump rather than a fault.
+
+## NMI
+
+`n` drives NMI low for a number of **E cycles**, not microseconds, so the pulse
+tracks `k`: 16 µs at E = 250 kHz, 14 ms at the 286 Hz floor, where any fixed
+microsecond figure would simply vanish. §2.7 makes the width matter — NMI is
+edge sensitive on the falling edge, but the line is "sampled by internal
+clock", so the low time has to span a sample. NMI idles high from before reset
+is released, since a part that comes out of reset with NMI already low takes
+the interrupt immediately.
+
+What it reaches depends on the mode, and in mode 0 it is not a control path:
+the NMI vector at `$FFFC/$FFFD` lives inside the enabled internal ROM, so an
+NMI runs *the chip's own* handler. Only `$FFFE` is fetched externally, and only
+for those first few cycles after RES. In a mode where the vectors are external
+— which is the case for variants that have no mode 0 — the Pico supplies
+`$FFFC` and `n` becomes a genuine break-in: interrupt the target at will and
+land in code you wrote, without losing its state to a reset the way `h` does.
+
+**The register dump it does not yet give you.** NMI stacks PC, X, A, B and CC.
+Point SP at external memory and those seven bytes land in the Pico's image —
+an exact snapshot of where a wandering CPU was and what it held, which is
+precisely what the slow-clock experiment wants. That needs the emulator to
+*capture* writes, and it currently does not: the PIO deliberately never drives
+on a write cycle and does not sample one either. Adding it means carrying R/W
+into the captured word so core1 can tell a read request from write data.
 
 ## Changing the clock at runtime
 

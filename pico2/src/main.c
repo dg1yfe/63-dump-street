@@ -29,6 +29,7 @@
 #define RESET_POR_MS         50    // 2.8 wants at least 20 ms at power-on
 #define RESET_PULSE_MS        1    // 2.8 wants 3 E cycles (12 us) to re-reset
 #define AS_TIMEOUT_MS       200
+#define NMI_CYCLES_DEFAULT    4    // E cycles to hold NMI low
 
 static PIO  bus_pio = pio0;
 static uint sm_clk, sm_bus;
@@ -116,6 +117,30 @@ bool     target_running(void)  { return running; }
 uint32_t target_bus_cycles(void) { return bus_cycles; }
 uint16_t target_last_addr(void)  { return last_addr; }
 
+// NMI is edge sensitive on the falling edge and, per 2.7, "sampled by internal
+// clock" - so the low time has to span at least one sample. The width is given
+// in E cycles rather than microseconds precisely because `k` can take E down
+// to 286 Hz, where any fixed microsecond figure would vanish entirely.
+//
+// Push-pull, unlike RES and EXTAL. Those need Vcc-0.5 and Vcc*0.7, which 3.3 V
+// cannot reach; NMI is an "Other Input" at VIH = 2.0 V, so driving it directly
+// is in spec and cannot leave the line floating into a spurious interrupt.
+uint32_t target_nmi(uint32_t e_cycles) {
+    if (e_cycles == 0u)    e_cycles = NMI_CYCLES_DEFAULT;
+    if (e_cycles > 1000u)  e_cycles = 1000u;
+
+    uint32_t e_hz = (rig.extal_hz ? rig.extal_hz : EXTAL_HZ) / 4u;
+    uint32_t us = (uint32_t)(((uint64_t)e_cycles * 1000000u + e_hz - 1u) / e_hz);
+    if (us < 2u) us = 2u;
+
+    gpio_put(PIN_NMI, 0);
+    busy_wait_us(us);
+    gpio_put(PIN_NMI, 1);
+
+    rig.nmi_count++;
+    return us;
+}
+
 // The SCI rate follows the clock: baud = E/16 = EXTAL/64 = clk_sys/(128*N).
 // The PL011 divisor works out to exactly 8*N whenever clk_peri equals clk_sys,
 // which is an integer for every N - so the target's clock and the receiver
@@ -200,6 +225,13 @@ int main(void) {
     gpio_init(PIN_RES);
     gpio_disable_pulls(PIN_RES);   // an internal pull would fight the 5 V one
     res_assert();
+
+    // NMI idles high and must already be there at reset, or the part takes an
+    // interrupt the moment it starts.
+    gpio_init(PIN_NMI);
+    gpio_disable_pulls(PIN_NMI);
+    gpio_put(PIN_NMI, 1);
+    gpio_set_dir(PIN_NMI, GPIO_OUT);
 
     off_clk = pio_add_program(bus_pio, &extal_clk_program);
     sm_clk  = (uint)pio_claim_unused_sm(bus_pio, true);

@@ -21,6 +21,17 @@ bool target_running(void) { return running_flag; }
 uint32_t target_bus_cycles(void) { return 0; }
 uint16_t target_last_addr(void)  { return 0; }
 
+// Same width arithmetic as the firmware, minus the pin.
+uint32_t target_nmi(uint32_t e_cycles) {
+    if (e_cycles == 0u)   e_cycles = 4u;
+    if (e_cycles > 1000u) e_cycles = 1000u;
+    uint32_t e_hz = (rig.extal_hz ? rig.extal_hz : 1000000u) / 4u;
+    uint32_t us = (uint32_t)(((uint64_t)e_cycles * 1000000u + e_hz - 1u) / e_hz);
+    if (us < 2u) us = 2u;
+    rig.nmi_count++;
+    return us;
+}
+
 // Mirrors the firmware's arithmetic without any hardware: EXTAL = 75 MHz / N
 // for integer N, and the matching PL011 divisor is exactly 8N.
 uint32_t target_set_extal(uint32_t hz) {
