@@ -20,7 +20,7 @@ own mask ROM.
 | GP17 | in | P24 = SCI TX → UART0 RX | 12 |
 | GP18 | in | E | 40 |
 | GP19 | in | SC2 = R/W | 38 |
-| GP20 | open-drain | EXTAL, 1 MHz, **680 Ω to +5 V** | 3 |
+| GP20 | open-drain | EXTAL, 1 MHz, **470 Ω to +5 V** | 3 |
 | GP21 | open-drain | RES, **pull-up to +5 V** | 6 |
 | GP22 | push-pull | NMI | 4 |
 
@@ -37,9 +37,25 @@ These go nowhere near the Pico but decide whether the part runs at all:
 | 1 | Vss | ground |
 | 2 | XTAL | leave open, as §2.9 requires when EXTAL is driven externally |
 | 5 | IRQ1 | pull up. Harmless while I is set, which reset does and this firmware never undoes — but do not leave it floating for a target running its own code. |
-| 8, 9, 10 | P20, P21, P22 | to GND, strapping mode 0 |
+| 8, 9, 10 | P20, P21, P22 | to GND, strapping mode 0. **Check this ground is actually connected.** |
+| 12 | P24 | SCI TX. Give it a pull-up, or a pull-down — anything but floating |
 
 Pin numbers throughout are from `../doc/HD6301V-pinout.png` (DP-40).
+
+**The mode straps are the thing to check first when nothing works.** The mode
+is latched afresh at *every* reset, so if those pull-downs are not solidly
+grounded the part comes up in a different, random mode each time. Only mode 0
+fetches `$FFFE` externally; in any other mode the chip boots its own ROM and
+the dumper never runs. A floating strap rail cost an evening here, and its
+signature is distinctive: the boot trace shows one garbage address and then
+silence, with AS stuck high — because the dice came up mode 7, single-chip,
+where ports 3 and 4 are plain I/O and there is no external bus at all.
+
+P24 floats until the dumper sets TE and the 6301 takes the pin over, and a
+floating line reads as a start bit. A pull-down works — the PL011 treats a
+low line as a break and latches it once rather than reporting continuously —
+though a pull-up is marginally tidier, since an idle-high line produces no
+event at all.
 
 ### Why those two lines are open-drain
 
@@ -51,9 +67,21 @@ The other direction needs nothing: RP2350 GPIOs are 5 V tolerant on non-ADC
 pins with VIO powered, and this map uses GP0–GP22 only.
 
 The pull-up also sets the clock ceiling. Time above threshold is `T/2 − t_rise`,
-and with 680 Ω into ~30–40 pF `t_rise` is a fixed ~25–33 ns, so duty falls as
-EXTAL rises: 48.4 % at 500 kHz, 46.7 % at 1 MHz, but 43.4 % at 2 MHz and 36.8 %
-at 4 MHz — the last two outside the 45–55 % the datasheet requires. Beyond ~1 MHz this scheme has to be replaced by
+and `t_rise` is fixed by the RC, so duty falls as EXTAL rises. The resistor is
+what buys headroom:
+
+| EXTAL | 1 kΩ | 680 Ω | 470 Ω |
+|---|---|---|---|
+| 500 kHz | 47.9 % | 48.4 % | 48.9 % |
+| 1 MHz | **45.8 %** | 46.7 % | 47.7 % |
+| 2 MHz | 41.6 % | 43.4 % | 45.4 % |
+| 4 MHz | 33.2 % | 36.8 % | 40.8 % |
+
+1 kΩ at 1 MHz is only just inside the 45 % limit and falls outside it with a
+little more wire capacitance, which is reason enough not to use it. 470 Ω also
+brings 2 MHz within spec. The cost is sink current: 5 V / 470 Ω is 10.6 mA
+while the pin is held low, close to the RP2350's 12 mA per-pin guidance, so
+this is about as low as the resistor should go without a buffer. Beyond ~1 MHz this scheme has to be replaced by
 a 5 V HCT buffer. E = 250 kHz also keeps tcyc at 4 µs, mid-range in the 1–10 µs
 window, rather than the 8 µs that E = 125 kHz would give against a 10 µs limit.
 

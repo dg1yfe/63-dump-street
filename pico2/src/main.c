@@ -44,9 +44,9 @@ static volatile uint16_t last_addr;    // ditto: where the target last looked
 // bus can only be an interrupt stacking its frame. Trigger there and the next
 // addresses include the vector fetch itself, which names the culprit outright:
 // $FFFC/D is NMI, $FFEE/F is TRAP, $FFF8/9 is IRQ1, $FFFA/B is SWI.
-#define TRACE_N 48
+#define TRACE_N 256
 static volatile uint16_t trace_buf[TRACE_N];
-static volatile uint8_t  trace_len;
+static volatile uint16_t trace_len;
 static volatile bool     trace_armed;
 
 static uint32_t        as_mark;
