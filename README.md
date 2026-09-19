@@ -1,3 +1,8 @@
+<p align="center">
+  <img src="doc/63-dump-street.jpg" width="640"
+       alt="63 Dump Street - an HD6301V1 and a Raspberry Pi Pico 2 wired together on a breadboard, under neon">
+</p>
+
 # 63 Dump Street
 
 Reading the internal mask ROM out of a Hitachi HD6301V1.
