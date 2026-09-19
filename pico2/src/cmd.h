@@ -15,14 +15,19 @@ typedef struct {
     bool     as_seen;       // bus activity observed since the last start
     uint32_t sci_baud;      // rate the UART actually achieved, set by main.c
     uint32_t extal_hz;      // clock fed to the target, set by main.c
+    uint32_t extal_div;     // PIO divider behind it
+    bool     sci_clamped;   // the UART could not reach the rate E/16 implies
 } rig_stats_t;
 
 extern rig_stats_t rig;
 
 // Implemented in main.c: the parser drives the target through these.
-void target_halt(void);
-void target_run(void);
-bool target_running(void);
+void     target_halt(void);
+void     target_run(void);
+bool     target_running(void);
+uint32_t target_set_extal(uint32_t hz);   // returns the rate actually set
+uint32_t target_bus_cycles(void);
+uint16_t target_last_addr(void);
 
 void cmd_init(void);
 void cmd_feed(uint8_t ch);

@@ -54,6 +54,15 @@ static bool hex_arg(const char *s, uint32_t *out) {
     return true;
 }
 
+static bool dec_arg(const char *s, uint32_t *out) {
+    while (*s == ' ' || *s == '\t') s++;
+    if (*s < '0' || *s > '9') return false;
+    uint32_t v = 0;
+    while (*s >= '0' && *s <= '9') v = v * 10u + (uint32_t)(*s++ - '0');
+    *out = v;
+    return true;
+}
+
 // --- Intel HEX in -----------------------------------------------------------
 
 static void hex_record(const char *s, size_t len) {
@@ -182,12 +191,27 @@ static void status(void) {
            (unsigned)rig.hex_errors);
     printf("uart     %u framing, %u overrun\n",
            (unsigned)rig.uart_framing, (unsigned)rig.uart_overrun);
-    printf("bus      %s\n", rig.as_seen ? "active" : "no activity");
+    // Cycles and the last address together say whether the target is alive:
+    // a running CPU advances both, and one that has reached SLP stops issuing
+    // cycles entirely, so a frozen count is the normal end of a dump.
+    printf("bus      %s, %u cycles, last addr %04X\n",
+           rig.as_seen ? "active" : "no activity",
+           (unsigned)target_bus_cycles(), (unsigned)target_last_addr());
     // The achieved rate, not the requested one: everything downstream depends
     // on it, and a divisor that did not come out exact shows up here.
-    printf("clock    EXTAL %u Hz, E %u Hz, SCI %u baud\n",
-           (unsigned)rig.extal_hz, (unsigned)(rig.extal_hz / 4u),
-           (unsigned)rig.sci_baud);
+    uint32_t e = rig.extal_hz / 4u;
+    printf("clock    EXTAL %u Hz (div %u), E %u Hz, SCI %u baud\n",
+           (unsigned)rig.extal_hz, (unsigned)rig.extal_div,
+           (unsigned)e, (unsigned)rig.sci_baud);
+    if (e > 1000000u)
+        puts("warn     E above the 1 MHz maximum for HD6301V1");
+    else if (e < 100000u && e > 0u)
+        printf("warn     E below the 100 kHz minimum - tcyc %u us, the core's "
+               "dynamic nodes may not hold\n", (unsigned)(1000000u / e));
+    if (rig.extal_hz > 1000000u)
+        puts("warn     EXTAL above 1 MHz - open-drain duty falls below 45%");
+    if (rig.sci_clamped)
+        puts("warn     SCI rate outside the UART's range - capture will not decode");
 }
 
 static void help(void) {
@@ -199,6 +223,7 @@ static void help(void) {
     puts("d [addr]  read the capture back as Intel HEX (default base F000)");
     puts("b         read the capture back as binary after a LEN <n> line");
     puts("c         clear the capture buffer");
+    puts("k <hz>    retune EXTAL (decimal Hz) and halt; the SCI rate follows");
 }
 
 // --- dispatch ---------------------------------------------------------------
@@ -239,6 +264,15 @@ static void do_line(void) {
         mem[0xFFFF] = (uint8_t)a;
         target_run();
         printf("OK running from %04X\n", (unsigned)(a & 0xFFFFu));
+        break;
+
+    case 'k':
+        if (!dec_arg(line + 1, &a) || a == 0u) {
+            puts("ERR k needs a frequency in Hz");
+            break;
+        }
+        printf("OK EXTAL %u Hz, halted\n", (unsigned)target_set_extal(a));
+        status();
         break;
 
     case 's': status(); break;

@@ -137,6 +137,40 @@ def main():
     check("empty binary is LEN 0 with no payload after it",
           raw.endswith(b"LEN 0\n"), raw)
 
+    print("runtime clock retuning")
+    out = run("k 1000000\n").decode()
+    check("1 MHz lands on divider 75",
+          "EXTAL 1000000 Hz (div 75), E 250000 Hz, SCI 15625 baud" in out,
+          out.strip())
+    check("retuning halts the target", "state    halted" in out, out.strip())
+    check("in spec, no warning", "warn" not in out, out.strip())
+
+    out = run("k 500000\n").decode()
+    check("500 kHz lands on divider 150",
+          "EXTAL 500000 Hz (div 150), E 125000 Hz" in out, out.strip())
+
+    out = run("k 0\n").decode()
+    check("zero rejected", "ERR k needs a frequency" in out, out.strip())
+    out = run("k\n").decode()
+    check("missing argument rejected", "ERR k needs a frequency" in out, out.strip())
+
+    print("below the datasheet floor - allowed, but flagged")
+    out = run("k 50000\n").decode()
+    check("sub-spec E accepted", "EXTAL 50000 Hz (div 1500), E 12500 Hz" in out,
+          out.strip())
+    check("sub-spec E warns with tcyc",
+          "warn     E below the 100 kHz minimum - tcyc 80 us" in out, out.strip())
+
+    out = run("k 1144\n").decode()
+    check("divider clamps at 65535", "(div 65535)" in out, out.strip())
+    check("slowest setting is ~286 Hz E", "E 286 Hz" in out, out.strip())
+    check("unreachable SCI rate is reported",
+          "warn     SCI rate outside the UART's range" in out, out.strip())
+
+    out = run("k 2000000\n").decode()
+    check("above 1 MHz warns about duty",
+          "warn     EXTAL above 1 MHz" in out, out.strip())
+
     print("status and unknown commands")
     out = run("s\n").decode()
     check("status reports halted", "state    halted" in out, out.strip())

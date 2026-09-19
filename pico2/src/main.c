@@ -37,6 +37,7 @@ static uint off_clk, off_bus;
 static volatile bool     running;
 static volatile bool     resync_req;
 static volatile uint32_t bus_cycles;   // core1 only writes, core0 only reads
+static volatile uint16_t last_addr;    // ditto: where the target last looked
 
 static uint32_t        as_mark;
 static absolute_time_t as_deadline;
@@ -62,6 +63,7 @@ static void core1_main(void) {
         if (!pio_sm_is_rx_fifo_empty(bus_pio, sm_bus)) {
             uint32_t a = pio_sm_get(bus_pio, sm_bus);
             pio_sm_put(bus_pio, sm_bus, mem[a & 0xFFFFu]);
+            last_addr = (uint16_t)a;
             bus_cycles++;
         }
     }
@@ -110,7 +112,64 @@ void target_run(void) {
     running = true;
 }
 
-bool target_running(void) { return running; }
+bool     target_running(void)  { return running; }
+uint32_t target_bus_cycles(void) { return bus_cycles; }
+uint16_t target_last_addr(void)  { return last_addr; }
+
+// The SCI rate follows the clock: baud = E/16 = EXTAL/64 = clk_sys/(128*N).
+// The PL011 divisor works out to exactly 8*N whenever clk_peri equals clk_sys,
+// which is an integer for every N - so the target's clock and the receiver
+// stay exactly matched at any setting, with no fractional divisor on either
+// side. Below about N = 8191 the divisor no longer fits and capture stops
+// decoding, which `s` reports rather than hiding.
+static void sci_retune(uint32_t n) {
+    uint64_t div64 = ((uint64_t)8u * n * clock_get_hz(clk_peri) * 64u)
+                   / clock_get_hz(clk_sys);
+    uint32_t ibrd = (uint32_t)(div64 >> 6);
+    uint32_t fbrd = (uint32_t)(div64 & 0x3Fu);
+
+    rig.sci_clamped = false;
+    if (ibrd > 65535u) { ibrd = 65535u; fbrd = 63u; rig.sci_clamped = true; }
+    if (ibrd == 0u)    { ibrd = 1u;     fbrd = 0u;  rig.sci_clamped = true; }
+
+    uart_get_hw(uart0)->ibrd = ibrd;
+    uart_get_hw(uart0)->fbrd = fbrd;
+    // The PL011 latches the divisor on the next LCR_H write, so write it back.
+    uart_get_hw(uart0)->lcr_h = uart_get_hw(uart0)->lcr_h;
+
+    rig.sci_baud = (uint32_t)(((uint64_t)clock_get_hz(clk_peri) * 4u)
+                              / (64u * ibrd + fbrd));
+}
+
+// Retune EXTAL at runtime. The target is halted first: changing E mid-run
+// would leave the SCI part-way through a character at the old rate, and the
+// divider restart can emit a short period.
+//
+// Deliberately unclamped. The HD6301V1's 100 kHz floor exists because parts of
+// the core are dynamic rather than static, and walking below it to watch that
+// happen is a legitimate thing to want; `s` says how far out of spec a setting
+// is instead of refusing it. The only hard limits here are the PIO divider's
+// own 1..65535, which bottom out around 1.14 kHz EXTAL - E of 286 Hz, a 3.5 ms
+// bus cycle, some 350x slower than the datasheet minimum.
+uint32_t target_set_extal(uint32_t hz) {
+    if (hz == 0u) return rig.extal_hz;
+    target_halt();
+
+    uint32_t sys = clock_get_hz(clk_sys);
+    uint32_t n = (sys / 2u + hz / 2u) / hz;    // two instructions per period
+    if (n < 1u)     n = 1u;
+    if (n > 65535u) n = 65535u;
+
+    pio_sm_set_enabled(bus_pio, sm_clk, false);
+    pio_sm_set_clkdiv_int_frac(bus_pio, sm_clk, (uint16_t)n, 0);
+    pio_sm_clkdiv_restart(bus_pio, sm_clk);    // integer only: a fractional
+    pio_sm_set_enabled(bus_pio, sm_clk, true); // divider would jitter the duty
+
+    rig.extal_div = n;
+    rig.extal_hz  = sys / (2u * n);
+    sci_retune(n);
+    return rig.extal_hz;
+}
 
 // --- main -------------------------------------------------------------------
 
@@ -153,13 +212,14 @@ int main(void) {
     multicore_launch_core1(core1_main);
 
     gpio_set_function(PIN_SCI_RX, GPIO_FUNC_UART);
-    // 150 MHz / (16 * 15625) = 600 exactly, so this lands on the nominal rate
-    // with a zero fractional divisor. `s` reports what it actually got.
-    rig.sci_baud = uart_init(uart0, SCI_BAUD);
-    rig.extal_hz = EXTAL_HZ;
+    uart_init(uart0, SCI_BAUD);
     uart_set_format(uart0, 8, 1, UART_PARITY_NONE);
     uart_set_hw_flow(uart0, false, false);
     uart_set_fifo_enabled(uart0, true);
+
+    // Sets the PIO divider and the matching UART divisor from one place, so
+    // the two can never disagree about what rate the link is running at.
+    target_set_extal(EXTAL_HZ);
 
     sleep_ms(RESET_POR_MS);
     target_run();                  // power-on run of the built-in image

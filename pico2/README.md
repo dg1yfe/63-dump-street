@@ -71,7 +71,10 @@ a response and no framing or escaping is needed anywhere.
 | `d [addr]` | read the capture back as Intel HEX, default base `F000` |
 | `b` | read the capture back as binary after a `LEN <n>` line |
 | `c` | clear the capture buffer |
+| `k <hz>` | retune EXTAL (decimal Hz) and halt; the SCI rate follows |
 | `?` | command summary |
+
+Addresses are hex, frequencies decimal.
 
 `h` is a reset hold, not a resumable halt: the HD6301V1 has no HALT or MR pin
 and cannot have its clock stopped (100 kHz minimum), so register state is lost.
@@ -82,6 +85,58 @@ patch cannot disturb the dump.
 
 Watch the **framing** counter in `s`. Non-zero is the signature of a baud
 mismatch, which otherwise looks exactly like a chip returning garbage.
+
+`s` also reports bus cycles and the last address the target fetched. Together
+they say whether it is alive: a running CPU advances both, and one that has
+reached `SLP` stops issuing cycles entirely, so a frozen count is the normal
+end of a dump rather than a fault.
+
+## Changing the clock at runtime
+
+`k <hz>` rewrites the PIO divider, retunes the UART to match, and leaves the
+target halted for a following `g`. EXTAL = 75 MHz / N for integer N only — a
+fractional divider would stretch occasional cycles, which is exactly the duty
+asymmetry the 45–55 % spec is about.
+
+The arithmetic works out unusually well: the PL011 divisor comes to **exactly
+8N** for every N, so the target's clock and the receiver's baud stay exactly
+matched at any setting, with no fractional divisor on either side.
+
+| N | EXTAL | E | SCI baud | IBRD |
+|---|---|---|---|---|
+| 75 | 1.000 MHz | 250 kHz | 15625 | 600 |
+| 150 | 500 kHz | 125 kHz | 7812.5 | 1200 |
+| 1500 | 50 kHz | 12.5 kHz | 781.25 | 12000 |
+| 8191 | 9.16 kHz | 2.29 kHz | 143.1 | 65528 |
+| 65535 | 1.14 kHz | 286 Hz | 17.9 | (clamped) |
+
+RMCR stays `$04` throughout — E/16 is a fixed ratio, only E moves under it, so
+part 1 never changes.
+
+### Running it below spec on purpose
+
+`k` is deliberately **not** clamped to the datasheet. The HD6301V1's 100 kHz
+floor (tcyc ≤ 10 µs) exists because parts of the core are dynamic rather than
+static, and watching that fail is a legitimate thing to want to do. `s` says
+how far out of spec a setting is instead of refusing it.
+
+The divider bottoms out at N = 65535, i.e. **E ≈ 286 Hz — a 3.5 ms bus cycle,
+some 350× slower than the minimum.** Expect charge to leak off dynamic nodes
+somewhere well above that: corrupt bytes first, then the CPU wandering off.
+This is a logical failure, not an electrical one — the EXTAL edges stay fast
+whatever the frequency, so there is no overvoltage and no extra current, and
+the part should come back on a reset at a valid rate.
+
+Two things make the experiment legible. The threshold is temperature
+dependent, because leakage roughly doubles every 10 °C — cooling the part
+should let it run slower, warming it should raise the floor. And the rig
+already knows what the answer should be: load the bring-up variant below,
+whose expected output is known exactly, then walk `k` down and watch where the
+capture stops matching.
+
+One instrumentation limit: below N ≈ 8191 (EXTAL 9.16 kHz) the UART can no
+longer reach the implied rate, and `s` says so. Past that point the observable
+is bus cycles and the last address, not the SCI.
 
 ## Building
 
