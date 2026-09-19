@@ -207,6 +207,33 @@ One instrumentation limit: below N ≈ 8191 (EXTAL 9.16 kHz) the UART can no
 longer reach the implied rate, and `s` says so. Past that point the observable
 is bus cycles and the last address, not the SCI.
 
+### How fast it will actually go
+
+Measured against a real HD6301V1 with the 470 Ω fitted, six dumps at each rate,
+every one verified against sha256 `6321af44`:
+
+| EXTAL | E | baud | duty | dump | result |
+|---|---|---|---|---|---|
+| 1.00 MHz | 250 kHz | 15,625 | 47.7 % | 2.6 s | default |
+| 1.97 MHz | 493 kHz | 30,843 | 46.1 % | 1.3 s | 6/6 |
+| 2.50 MHz | 625 kHz | 39,064 | 45.0 % | 1.0 s | 6/6 |
+| 3.00 MHz | 750 kHz | 46,875 | 44.0 % | 0.9 s | 6/6 |
+| 3.57 MHz | 893 kHz | 55,813 | 42.9 % | 0.7 s | 6/6 |
+| 3.95 MHz | 987 kHz | 61,696 | 42.1 % | 0.7 s | 6/6 |
+
+Two things that says. The 45–55 % duty requirement has margin in it — the part
+reads perfectly at 42.1 %, so it is not the cliff the arithmetic implies. And
+the ceiling that stopped the sweep is the **part's own rating**, not anything
+here: tcyc ≥ 1 µs puts E at 1.0 MHz, and 987 kHz is already there. The Pico
+still holds ~2.8× timing margin at that point and would not become the limit
+until roughly E = 1.5–2 MHz.
+
+**The default stays at 1 MHz regardless.** That sweep was taken on a breadboard
+with decoupled rails and a 470 Ω pull-up. A scrappier one, or the 1 kΩ, has
+less signal integrity to spend — and a dumper that works on bad wiring is worth
+more than one that is fast on good wiring. `k` is there when the rig in front of
+you justifies it.
+
 ## Building
 
 ```sh
