@@ -40,6 +40,15 @@ static volatile bool     resync_req;
 static volatile uint32_t bus_cycles;   // core1 only writes, core0 only reads
 static volatile uint16_t last_addr;    // ditto: where the target last looked
 
+// Derail trace. The dumper sets SP to $00FF and never pushes, so $00FF on the
+// bus can only be an interrupt stacking its frame. Trigger there and the next
+// addresses include the vector fetch itself, which names the culprit outright:
+// $FFFC/D is NMI, $FFEE/F is TRAP, $FFF8/9 is IRQ1, $FFFA/B is SWI.
+#define TRACE_N 48
+static volatile uint16_t trace_buf[TRACE_N];
+static volatile uint8_t  trace_len;
+static volatile bool     trace_armed;
+
 static uint32_t        as_mark;
 static absolute_time_t as_deadline;
 static bool            as_pending;
@@ -66,6 +75,9 @@ static void core1_main(void) {
             pio_sm_put(bus_pio, sm_bus, mem[a & 0xFFFFu]);
             last_addr = (uint16_t)a;
             bus_cycles++;
+            if (trace_armed && (uint16_t)a == 0x00FFu) trace_armed = false;
+            if (!trace_armed && trace_len < TRACE_N)
+                trace_buf[trace_len++] = (uint16_t)a;
         }
     }
 }
@@ -95,14 +107,25 @@ void target_halt(void) {
     running    = false;
     as_pending = false;
     bus_resync();
+    // Stop driving. Holding RES low does NOT quiet the bus: the target keeps
+    // strobing AS (measured at 248 kHz with RES low), and R/W idles high, so
+    // without this the emulator goes on answering phantom read cycles and
+    // driving the data bus into a chip that is held in reset - a quarter of a
+    // million times a second, for as long as the rig looks idle. If the V1
+    // drives its data bus on those cycles, that is continuous contention with
+    // nothing being accomplished.
+    pio_sm_set_enabled(bus_pio, sm_bus, false);
+    pio_sm_set_consecutive_pindirs(bus_pio, sm_bus, PIN_AD_BASE, 16, false);
 }
 
 void target_run(void) {
     res_assert();
-    bus_resync();
+    pio_sm_set_enabled(bus_pio, sm_bus, false);
     capture_reset();
     rig.as_seen = false;
+    trace_len = 0; trace_armed = true;
     sleep_ms(RESET_PULSE_MS);
+    bus_resync();
 
     // The bus state machine is already running, which it must be: in mode 0
     // the vector fetch happens within 3 or 4 cycles of RES rising.
@@ -194,6 +217,48 @@ uint32_t target_set_extal(uint32_t hz) {
     rig.extal_hz  = sys / (2u * n);
     sci_retune(n);
     return rig.extal_hz;
+}
+
+// Sample the input pins flat out for a short window and report what each is
+// actually doing. Written because the bus-cycle counter was reading above the
+// E rate, which is impossible for real cycles - so the question stopped being
+// "what is the CPU doing" and became "what is actually on these wires".
+void target_pin_survey(void) {
+    enum { N = 4000 };
+    static uint32_t buf[N];
+
+    uint32_t t0 = time_us_32();
+    for (uint32_t i = 0; i < N; i++) buf[i] = gpio_get_all();
+    uint32_t us = time_us_32() - t0;
+    if (us == 0) us = 1;
+
+    const uint8_t  pins[]  = { PIN_AS, PIN_E, PIN_RW, 0, 7, 8, 15 };
+    const char    *names[] = { "AS  ", "E   ", "R/W ", "AD0 ", "AD7 ", "A8  ", "A15 " };
+
+    printf("survey   %u samples in %u us (%u ns/sample)\n",
+           (unsigned)N, (unsigned)us, (unsigned)(us * 1000u / N));
+    for (unsigned k = 0; k < count_of(pins); k++) {
+        uint32_t bit = 1u << pins[k], edges = 0, high = 0;
+        for (uint32_t i = 1; i < N; i++) {
+            if ((buf[i] ^ buf[i - 1]) & bit) edges++;
+            if (buf[i] & bit) high++;
+        }
+        // Two edges per period, so kHz = edges / 2 / (us/1000).
+        printf("  GP%-2u %s edges %6u  high %3u%%  ~%u kHz\n",
+               (unsigned)pins[k], names[k], (unsigned)edges,
+               (unsigned)(100u * high / (N - 1)),
+               (unsigned)(edges * 500u / us));
+    }
+}
+
+void target_trace(void) {
+    if (trace_armed) { puts("trace    not triggered - no interrupt frame seen"); return; }
+    printf("trace    triggered on $00FF, %u addresses:\n  ", (unsigned)trace_len);
+    for (unsigned i = 0; i < trace_len; i++) {
+        printf("%04X ", (unsigned)trace_buf[i]);
+        if ((i % 12) == 11) printf("\n  ");
+    }
+    printf("\n");
 }
 
 // --- main -------------------------------------------------------------------

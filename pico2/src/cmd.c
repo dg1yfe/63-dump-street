@@ -221,6 +221,7 @@ static void help(void) {
     puts("r         reset and run from the vector at $FFFE");
     puts("g <addr>  set the vector at $FFFE to <addr>, then run");
     puts("s         status");
+    puts("t         survey what the input pins are actually doing");
     puts("d [addr]  read the capture back as Intel HEX (default base F000)");
     puts("b         read the capture back as binary after a LEN <n> line");
     puts("c         clear the capture buffer");
@@ -284,6 +285,9 @@ static void do_line(void) {
                target_running() ? "" : " (target halted - it will not be seen)");
         break;
     }
+
+    case 't': target_pin_survey(); break;
+    case 'T': target_trace(); break;
 
     case 's': status(); break;
     case 'd': hex_out(hex_arg(line + 1, &a) ? a : 0xF000u); break;
