@@ -43,9 +43,16 @@
 .program bus_slave
 .wrap_target
 top:
-    wait 1 gpio PIN_AS
-    wait 0 gpio PIN_AS      ; AS falling: A0-A7 on GP0-7, A8-A15 on GP8-15
-    in   pins, 16           ; whole address in one go; autopush hands it over
+    wait 1 gpio PIN_AS [15] ; let the address settle after the strobe rises
+    in   pins, 16           ; Sample in the MIDDLE of the valid window, not at
+                            ; its edge. A0-A7 sit on port 3 only while AS is
+                            ; high, and the falling edge is exactly when that
+                            ; port turns into the data bus - so sampling there
+                            ; races the changeover, and AS and the address
+                            ; lines do not arrive down a breadboard with equal
+                            ; delay. AS is high ~1 us, so +107 ns is well
+                            ; inside it.
+    wait 0 gpio PIN_AS      ; address phase over; port 3 becomes the data bus
     pull block              ; core1's answer
     jmp  pin, do_drive      ; JMP_PIN is R/W: high = read
     jmp  top                ; write cycle: never drive

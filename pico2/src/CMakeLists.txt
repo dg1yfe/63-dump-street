@@ -61,4 +61,13 @@ pico_set_program_description(hd6301dump
 pico_enable_stdio_usb(hd6301dump 1)
 pico_enable_stdio_uart(hd6301dump 0)
 
+# Run the whole image from RAM. Annotating core1's loop with
+# __not_in_flash_func fixes the loop itself, but only the loop - anything it
+# ever calls, and any interrupt handler, would still stall on an XIP cache miss
+# while core0 hammers USB. Copying everything to RAM makes the guarantee
+# categorical instead of a list of functions somebody remembered. Costs about
+# 64 KB of the RP2350's 520 KB, on top of the 136 KB the two buffers already
+# take, and a slightly longer boot.
+pico_set_binary_type(hd6301dump copy_to_ram)
+
 pico_add_extra_outputs(hd6301dump)

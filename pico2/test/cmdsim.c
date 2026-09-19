@@ -18,6 +18,11 @@ void target_halt(void)    { running_flag = false; }
 void target_run(void)     { running_flag = true; capture_reset(); }
 bool target_running(void) { return running_flag; }
 
+// The diagnostics touch hardware, so off-target they are stubs - the protocol
+// tests exercise the parser and the read-back formats, not the instruments.
+void target_pin_survey(void) { puts("survey   (not available off-target)"); }
+void target_trace(void)      { puts("trace    (not available off-target)"); }
+
 uint32_t target_bus_cycles(void) { return 0; }
 uint16_t target_last_addr(void)  { return 0; }
 

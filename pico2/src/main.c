@@ -60,7 +60,13 @@ static bool            as_pending;
 // and a reset landing between them would leave the two FIFOs one entry out of
 // step for good, handing every cycle the answer to its predecessor.
 
-static void core1_main(void) {
+// In RAM, not flash. The bus loop has to answer within a bus cycle, and code
+// executing from flash stalls on an XIP cache miss - which core0 provokes
+// constantly while it services USB. Measured before this: dumps completed
+// 12/16 while the host polled status, but 11/12 when it stayed quiet. Every
+// one of those mid-dump failures was core1 arriving late with a byte, the CPU
+// reading whatever was on the bus, and executing it.
+static void __not_in_flash_func(core1_main)(void) {
     while (true) {
         if (resync_req) {
             pio_sm_set_enabled(bus_pio, sm_bus, false);
@@ -94,7 +100,17 @@ static void res_assert(void) {
 }
 
 static void res_release(void) {
+    // Kick the node high before letting go. 3.3 V is under the Vcc-0.5 = 4.5 V
+    // this input wants, so it cannot be held there - but driving it low-Z for
+    // a moment slews past the sluggish first part of the RC, and the pull-up
+    // then only has 3.3 V to 5 V left to cover. Releasing cold makes the whole
+    // ramp an RC, and a slow ramp into a non-Schmitt reset input is what was
+    // leaving the part not started at all.
+    gpio_put(PIN_RES, 1);
+    gpio_set_dir(PIN_RES, GPIO_OUT);
+    busy_wait_us(1);
     gpio_set_dir(PIN_RES, GPIO_IN);
+    gpio_put(PIN_RES, 0);          // latch back low, ready for the next assert
 }
 
 static void bus_resync(void) {
@@ -123,16 +139,63 @@ void target_run(void) {
     pio_sm_set_enabled(bus_pio, sm_bus, false);
     capture_reset();
     rig.as_seen = false;
-    trace_len = 0; trace_armed = true;
+    trace_len = 0; trace_armed = false;   // record from the first cycle
     sleep_ms(RESET_PULSE_MS);
-    bus_resync();
 
     // The bus state machine is already running, which it must be: in mode 0
     // the vector fetch happens within 3 or 4 cycles of RES rising.
     as_mark    = bus_cycles;
     as_deadline = make_timeout_time_ms(AS_TIMEOUT_MS);
     as_pending = true;
-    res_release();
+
+    // Release RES first, then start the bus - in that order, and inline rather
+    // than through core1, to keep the gap to a microsecond or so.
+    //
+    // Starting it before the release does not work: the bus never stops during
+    // reset, so a phantom AS can capture the state machine in a mid-cycle wait
+    // on E at precisely the moment the real vector fetch arrives. Starting it
+    // after means it is certainly parked at `top` waiting for AS, and the
+    // first strobe it sees is the real one. The window is generous - mode 0
+    // fetches $FFFE externally for 3 or 4 cycles, which at E = 250 kHz is
+    // 12-16 us against the microsecond this takes.
+    // Release and restart, then check the target actually came out of reset.
+    // It intermittently does not: RES is open drain through a pull-up, and a
+    // slow ramp into a non-Schmitt input sometimes leaves the part never
+    // running its reset sequence at all. The trace of a failed start shows one
+    // garbage address and then silence - no $FFFE fetch, and AS stuck high so
+    // the state machine has nothing left to wait for. It is cheap to spot,
+    // because a target that is running cannot help generating bus cycles.
+    for (int attempt = 0; attempt < 8; attempt++) {
+        trace_len = 0;
+        res_release();
+        pio_sm_clear_fifos(bus_pio, sm_bus);
+        pio_sm_restart(bus_pio, sm_bus);
+        pio_sm_exec(bus_pio, sm_bus, pio_encode_jmp(off_bus));
+        pio_sm_set_enabled(bus_pio, sm_bus, true);
+
+        // Checking merely for bus activity is not enough: a target that booted
+        // its own ROM instead of ours is busy too. Look for the entry address
+        // itself in the trace - that only appears if the external vector fetch
+        // was caught and our code is executing.
+        sleep_ms(2);                       // ~500 bus cycles at E = 250 kHz
+        uint16_t entry = (uint16_t)((mem[0xFFFEu] << 8) | mem[0xFFFFu]);
+        bool started = false;
+        for (unsigned i = 0; i < trace_len; i++)
+            if (trace_buf[i] == entry) { started = true; break; }
+        if (started) break;
+
+        rig.restarts++;
+        res_assert();
+        pio_sm_set_enabled(bus_pio, sm_bus, false);
+        sleep_ms(RESET_PULSE_MS);
+        trace_len = 0;
+    }
+    // Clear after the retries, not before them: a reset that failed to take
+    // glitches the target's TX line on the way out, and that glitch was
+    // landing in the buffer as a leading junk byte. It is exactly the
+    // 4097-byte dumps, one per retry.
+    capture_reset();
+    rig.uart_framing = 0;
     running = true;
 }
 

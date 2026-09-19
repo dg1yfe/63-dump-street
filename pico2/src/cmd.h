@@ -18,6 +18,7 @@ typedef struct {
     uint32_t extal_div;     // PIO divider behind it
     bool     sci_clamped;   // the UART could not reach the rate E/16 implies
     uint32_t nmi_count;     // NMI pulses issued since power-on
+    uint32_t restarts;      // resets that had to be repeated to take
 } rig_stats_t;
 
 extern rig_stats_t rig;

@@ -198,6 +198,7 @@ static void status(void) {
            rig.as_seen ? "active" : "no activity",
            (unsigned)target_bus_cycles(), (unsigned)target_last_addr());
     printf("nmi      %u issued\n", (unsigned)rig.nmi_count);
+    printf("restart  %u resets had to be repeated\n", (unsigned)rig.restarts);
     // The achieved rate, not the requested one: everything downstream depends
     // on it, and a divisor that did not come out exact shows up here.
     uint32_t e = rig.extal_hz / 4u;
