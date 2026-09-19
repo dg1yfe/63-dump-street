@@ -10,23 +10,35 @@
 # -l append the label table to the listing.
 #
 # The image spans $C000..$FFFF, so it is 16384 bytes and loads at $C000.
+#
+# `make hex` produces Intel HEX instead, for the Pico 2 loader in ../pico2.
+# Without -c that emits records only for the regions actually written -
+# $C000..$C01E and $FFFE..$FFFF - rather than 16 KB of mostly $FF.
 
 SRC      := romdump.asm
 BIN      := romdump.bin
+HEX      := romdump.hex
 LST      := romdump.lst
 ASM      ?= tabasm
 ASMOPTS  ?= --cpu 6303 -b -c -fFF -l
+HEXOPTS  ?= --cpu 6303 -g0 -l
 
-.PHONY: all verify clean
+.PHONY: all hex verify clean
 
 all: $(BIN)
 
 $(BIN): $(SRC)
 	$(ASM) $(ASMOPTS) $(SRC) $(BIN) $(LST)
 
-# Cheap sanity checks: image size and reset vector byte order. tabasm emits
-# .word little endian by default, so a byte-swapped vector is the most likely
-# silent failure in this image.
+hex: $(HEX)
+
+$(HEX): $(SRC)
+	$(ASM) $(HEXOPTS) $(SRC) $(HEX) $(LST)
+
+# Cheap sanity checks: image size, reset vector byte order, and the baud
+# divisor. tabasm emits .word little endian by default, so a byte-swapped
+# vector is the most likely silent failure in this image; the RMCR byte is
+# the one that decides whether the host hears anything intelligible.
 verify: $(BIN)
 	@test "$$(wc -c < $(BIN))" -eq 16384 \
 	  && echo "OK   size 16384 bytes (\$$C000..\$$FFFF)" \
@@ -34,6 +46,9 @@ verify: $(BIN)
 	@test "$$(dd if=$(BIN) bs=1 skip=16382 count=2 2>/dev/null | xxd -p)" = "c000" \
 	  && echo "OK   reset vector \$$FFFE = \$$C000" \
 	  || (echo "FAIL reset vector byte order - was .msfirst lost?"; exit 1)
+	@test "$$(dd if=$(BIN) bs=1 skip=5 count=1 2>/dev/null | xxd -p)" = "04" \
+	  && echo "OK   RMCR = \$$04 (E/16 -> 15625 baud at E = 250 kHz)" \
+	  || (echo "FAIL RMCR byte at offset 5 is not \$$04"; exit 1)
 
 clean:
-	rm -f $(BIN) $(LST) $(SRC:.asm=.exp) $(SRC:.asm=.sym)
+	rm -f $(BIN) $(HEX) $(LST) $(SRC:.asm=.exp) $(SRC:.asm=.sym)

@@ -3,6 +3,19 @@
 
 # tabasm build products
 *.bin
+*.hex
 *.lst
 *.exp
 *.sym
+
+# Pico firmware build
+pico2/build/
+
+# Host protocol-test build
+pico2/test/cmdsim
+pico2/test/cmdsim.dSYM/
+pico2/test/rom_image.h
+pico2/test/*.tmp
+
+# Datasheets - large binaries, kept locally
+doc/*.pdf

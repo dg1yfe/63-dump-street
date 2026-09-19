@@ -1,0 +1,106 @@
+; ---------------------------------------------------------------------------
+; bus.pio - HD6301 multiplexed bus emulation and open-drain clock generation.
+;
+; The 6301 runs in mode 0 (multiplexed test): Port 3 carries A0-A7 while AS is
+; high and D0-D7 during the data phase, Port 4 carries A8-A15 for the whole
+; cycle, and E qualifies the data phase.
+; ---------------------------------------------------------------------------
+
+; Pin assignment. Several of these are baked into the instruction stream
+; because `wait gpio` takes an absolute pin number, so they are PUBLIC and the
+; C side uses the same names rather than repeating the numbers.
+.define PUBLIC PIN_AD_BASE   0      ; GP0..GP7   D0-D7 muxed with A0-A7
+.define PUBLIC PIN_AS       16      ; GP16       SC1, address strobe
+.define PUBLIC PIN_SCI_RX   17      ; GP17       P24, SCI transmit data
+.define PUBLIC PIN_E        18      ; GP18       E clock
+.define PUBLIC PIN_RW       19      ; GP19       SC2, read/write
+.define PUBLIC PIN_EXTAL    20      ; GP20       EXTAL, open drain
+.define PUBLIC PIN_RES      21      ; GP21       RES, open drain
+
+; ---------------------------------------------------------------------------
+; extal_clk - open-drain square wave for EXTAL.
+;
+; Only the direction is toggled; the output latch is left at 0 for good. The
+; pin therefore sinks or floats and never sources 3.3 V into the 5 V pull-up
+; that supplies the high level - the 6301 needs Vcc*0.7 = 3.5 V on EXTAL,
+; which a 3.3 V push-pull drive would not reach.
+; ---------------------------------------------------------------------------
+.program extal_clk
+.wrap_target
+    set pindirs, 1          ; sink: EXTAL low
+    set pindirs, 0          ; release: the pull-up takes it to 5 V
+.wrap
+
+; ---------------------------------------------------------------------------
+; bus_slave - one pass per bus cycle.
+;
+; The response is always pulled, read cycle or not, so the RX and TX FIFOs
+; stay in lockstep with core1's one-in-one-out loop. A write cycle simply
+; discards it: the 6301 is driving the data bus then, and driving against it
+; is the one thing that must never happen.
+; ---------------------------------------------------------------------------
+.program bus_slave
+.wrap_target
+top:
+    wait 1 gpio PIN_AS
+    wait 0 gpio PIN_AS      ; AS falling: A0-A7 on GP0-7, A8-A15 on GP8-15
+    in   pins, 16           ; whole address in one go; autopush hands it over
+    pull block              ; core1's answer
+    jmp  pin, do_drive      ; JMP_PIN is R/W: high = read
+    jmp  top                ; write cycle: never drive
+do_drive:
+    wait 1 gpio PIN_E       ; data phase
+    out  pins, 8            ; data onto GP0-7 before the drivers are enabled
+    mov  osr, ~null
+    out  pindirs, 8         ; enable
+    wait 0 gpio PIN_E [7]   ; hold past E falling for the 6301's data hold time
+    mov  osr, null
+    out  pindirs, 8         ; release, well before the next AS
+.wrap
+
+% c-sdk {
+#include "hardware/clocks.h"
+#include "hardware/gpio.h"
+
+static inline void extal_clk_program_init(PIO pio, uint sm, uint offset,
+                                          uint pin, uint hz) {
+    gpio_disable_pulls(pin);        // an internal pull would fight the 5 V one
+    pio_gpio_init(pio, pin);
+    pio_sm_config c = extal_clk_program_get_default_config(offset);
+    sm_config_set_set_pins(&c, pin, 1);
+    // Two instructions per period.
+    sm_config_set_clkdiv(&c, (float)clock_get_hz(clk_sys) / (2.0f * (float)hz));
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_exec(pio, sm, pio_encode_set(pio_pins, 0));     // latch low, forever
+    pio_sm_exec(pio, sm, pio_encode_set(pio_pindirs, 0));  // start floating
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+static inline void bus_slave_program_init(PIO pio, uint sm, uint offset) {
+    for (uint p = PIN_AD_BASE; p < PIN_AD_BASE + 16; p++) {
+        pio_gpio_init(pio, p);
+        gpio_pull_down(p);
+    }
+    // AS, E and R/W are read by absolute gpio number and so are not mapped
+    // into the state machine. All three are pulled down, so the floating bus a
+    // target held in reset presents reads as "no strobe" and "write" - never
+    // as a read the emulator would answer into.
+    gpio_init(PIN_AS); gpio_set_dir(PIN_AS, GPIO_IN); gpio_pull_down(PIN_AS);
+    gpio_init(PIN_E);  gpio_set_dir(PIN_E,  GPIO_IN); gpio_pull_down(PIN_E);
+    gpio_init(PIN_RW); gpio_set_dir(PIN_RW, GPIO_IN); gpio_pull_down(PIN_RW);
+
+    pio_sm_set_consecutive_pindirs(pio, sm, PIN_AD_BASE, 16, false);
+
+    pio_sm_config c = bus_slave_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, PIN_AD_BASE);
+    sm_config_set_out_pins(&c, PIN_AD_BASE, 8);
+    sm_config_set_jmp_pin(&c, PIN_RW);
+    // IN shifts left so the 16 captured bits land right-aligned as 0..0xFFFF.
+    sm_config_set_in_shift(&c, false, true, 16);
+    // OUT shifts right so `out pins, 8` takes the low byte of the response.
+    sm_config_set_out_shift(&c, true, false, 32);
+    sm_config_set_clkdiv(&c, 1.0f);     // full speed; latency is the whole point
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

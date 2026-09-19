@@ -1,15 +1,17 @@
 ; ---------------------------------------------------------------------------
 ; romdump.asm - HD6301V1: transmit $F000..$FFFF over the SCI, then sleep.
 ;
-; Target   HD6301V1, EXTAL 500 kHz -> E = 125 kHz (on-chip divide by four)
+; Target   HD6301V1, EXTAL 1 MHz -> E = 250 kHz (on-chip divide by four)
 ; Assemble tabasm --cpu 6303 -b -fFF -l romdump.asm romdump.bin romdump.lst
 ;
-; The SCI baud generator only divides E by 16, 128, 1024 or 4096, so at
-; E = 125 kHz the attainable rates are 7812.5, 976.5625, 122.07 and 30.52
-; baud. 1200 is not among them; this uses 976.5625 baud, the closest.
+; The SCI baud generator divides E by 16, 128, 1024 or 4096. This uses the
+; fastest of the four, E/16, giving 250000 / 16 = 15625 baud exactly, so a
+; 4096 byte dump takes 4096 * 10 / 15625 = 2.6 s.
 ;
-; The program sits at $C000. $F000..$FFFD is left free for test bit patterns
-; and is never written here; $FFFE..$FFFF holds the reset vector.
+; The program sits at $C000 in emulated external memory. $F000..$FFFF is the
+; internal mask ROM this dumps; the only part of it written here is the reset
+; vector at $FFFE, which in mode 0 is fetched externally for 3 or 4 cycles
+; after RES rises and reverts to internal ROM after that.
 ; ---------------------------------------------------------------------------
 
 ; ---- internal registers ---------------------------------------------------
@@ -21,8 +23,8 @@ TDRE    .equ  $20             ; TRCSR bit 5, transmit data register empty
 TE      .equ  $02             ; TRCSR bit 1, transmit enable
 
 ; CC1:CC0 = 01  internal clock, P22 left as a general purpose pin
-; SS1:SS0 = 01  E / 128 -> 125000 / 128 = 976.5625 baud
-RMCRV   .equ  $05
+; SS1:SS0 = 00  E / 16 -> 250000 / 16 = 15625 baud
+RMCRV   .equ  $04
 
 STACK   .equ  $00FF           ; top of internal RAM ($0080..$00FF)
 DUMPBEG .equ  $F000           ; first byte sent; the last one is $FFFF
@@ -52,7 +54,7 @@ halt
         bra   halt            ; a masked interrupt would resume here
 
 ; ---- reset vector ---------------------------------------------------------
-; $F000..$FFFD is reserved for the test bit patterns and is left untouched.
+; $F000..$FFFD belongs to the internal mask ROM and is not written here.
 ; .msfirst is required: tabasm emits .word little endian by default.
         .msfirst
         .org  $FFFE
