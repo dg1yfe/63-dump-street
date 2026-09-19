@@ -28,9 +28,18 @@ NMI is push-pull, unlike the other two Pico outputs: it is an "Other Input" at
 V<sub>IH</sub> = 2.0 V, which 3.3 V clears easily, so it needs no pull-up and —
 more to the point — can never be left floating into a spurious interrupt.
 
-Straps: P20/P21/P22 (pins 8, 9, 10) to GND for mode 0. XTAL (pin 2) left open,
-as §2.9 requires when EXTAL is driven externally. Verify Vcc/Vss/STBY against
-the datasheet before powering anything.
+These go nowhere near the Pico but decide whether the part runs at all:
+
+| HD6301 pin | | |
+|---|---|---|
+| 7 | STBY | **to Vcc.** Low stops every clock and holds the part in the reset state (§2.12). Like RES it wants Vcc−0.5 = 4.5 V, so it cannot be driven from the Pico — tie it high. |
+| 21 | Vcc | +5 V |
+| 1 | Vss | ground |
+| 2 | XTAL | leave open, as §2.9 requires when EXTAL is driven externally |
+| 5 | IRQ1 | pull up. Harmless while I is set, which reset does and this firmware never undoes — but do not leave it floating for a target running its own code. |
+| 8, 9, 10 | P20, P21, P22 | to GND, strapping mode 0 |
+
+Pin numbers throughout are from `../doc/HD6301V-pinout.png` (DP-40).
 
 ### Why those two lines are open-drain
 
@@ -39,12 +48,12 @@ Vcc×0.7 = **3.5 V** on EXTAL. A 3.3 V push-pull output reaches neither, so the
 Pico only ever sinks those pins and the pull-up supplies the high level.
 Everything else it drives (D0–D7) is an "Other Input" at 2.0 V and goes direct.
 The other direction needs nothing: RP2350 GPIOs are 5 V tolerant on non-ADC
-pins with VIO powered, and this map uses GP0–GP21 only.
+pins with VIO powered, and this map uses GP0–GP22 only.
 
-The pull-up also sets the clock ceiling. Time above threshold is `T/2 − t_rise`
-while `t_rise` stays fixed at ~30–48 ns, so duty falls as EXTAL rises: 46.7 % at
-1 MHz with 680 Ω, but 42.8 % at 2 MHz and 35.6 % at 4 MHz — both outside the
-45–55 % the datasheet requires. Beyond ~1 MHz this scheme has to be replaced by
+The pull-up also sets the clock ceiling. Time above threshold is `T/2 − t_rise`,
+and with 680 Ω into ~30–40 pF `t_rise` is a fixed ~25–33 ns, so duty falls as
+EXTAL rises: 48.4 % at 500 kHz, 46.7 % at 1 MHz, but 43.4 % at 2 MHz and 36.8 %
+at 4 MHz — the last two outside the 45–55 % the datasheet requires. Beyond ~1 MHz this scheme has to be replaced by
 a 5 V HCT buffer. E = 250 kHz also keeps tcyc at 4 µs, mid-range in the 1–10 µs
 window, rather than the 8 µs that E = 125 kHz would give against a 10 µs limit.
 
