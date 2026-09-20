@@ -223,10 +223,12 @@ every one verified against sha256 `6321af44`:
 
 Two things that says. The 45–55 % duty requirement has margin in it — the part
 reads perfectly at 42.1 %, so it is not the cliff the arithmetic implies. And
-the ceiling that stopped the sweep is the **part's own rating**, not anything
-here: tcyc ≥ 1 µs puts E at 1.0 MHz, and 987 kHz is already there. The Pico
-still holds ~2.8× timing margin at that point and would not become the limit
-until roughly E = 1.5–2 MHz.
+the sweep never found a ceiling at all: it stopped at 987 kHz because that is
+where it was capped, on the assumption of a plain V1 rated to E = 1.0 MHz. The
+device markings say **HD63A01V1**, the A suffix, which is good for 1.5 MHz — so
+there is another third of headroom untested above the last row. The Pico holds
+~2.8× timing margin at 987 kHz and would become the limit somewhere around
+E = 1.5–2 MHz, which is now the more likely wall of the two.
 
 **The default stays at 1 MHz regardless.** That sweep was taken on a breadboard
 with decoupled rails and a 470 Ω pull-up. A scrappier one, or the 1 kΩ, has
