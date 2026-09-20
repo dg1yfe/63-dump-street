@@ -171,6 +171,21 @@ def main():
     check("above 1 MHz warns about duty",
           "warn     EXTAL above 1 MHz" in out, out.strip())
 
+    print("reset with NMI, the HD6301Y0 entry")
+    out = run("g b0b0\n").decode()
+    check("plain go is unchanged", "OK running from B0B0" in out, out.strip())
+    check("plain go fires no NMI", "NMI after" not in out, out.strip())
+
+    out = run("g b0b0 nmi\n").decode()
+    check("bare nmi means immediately",
+          "OK running from B0B0, NMI after 0 bus cycles" in out, out.strip())
+
+    out = run("g b0b0 nmi=3\n").decode()
+    check("delay honoured", "NMI after 3 bus cycles" in out, out.strip())
+
+    out = run("g b0b0 nmi\ns\n").decode()
+    check("the pulse is counted", "nmi      1 issued" in out, out.strip())
+
     print("NMI pulses, width in E cycles so it tracks the clock")
     out = run("k 1000000\nn\n").decode()
     check("default is 4 E cycles at 250 kHz = 16 us",

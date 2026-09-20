@@ -26,6 +26,7 @@ extern rig_stats_t rig;
 // Implemented in main.c: the parser drives the target through these.
 void     target_halt(void);
 void     target_run(void);
+void     target_run_nmi(int32_t nmi_after_cycles);  // <0 = no NMI
 bool     target_running(void);
 uint32_t target_set_extal(uint32_t hz);   // returns the rate actually set
 uint32_t target_bus_cycles(void);

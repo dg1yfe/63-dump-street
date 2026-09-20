@@ -220,7 +220,9 @@ static void help(void) {
     puts(":...      Intel HEX record, loaded into emulated memory");
     puts("h         halt - assert RES and hold it");
     puts("r         reset and run from the vector at $FFFE");
-    puts("g <addr>  set the vector at $FFFE to <addr>, then run");
+    puts("g <addr> [nmi[=<n>]]");
+    puts("          set the vector at $FFFE to <addr>, then run; nmi pulses");
+    puts("          NMI <n> bus cycles after reset (0 = immediately)");
     puts("s         status");
     puts("t         survey what the input pins are actually doing");
     puts("d [addr]  read the capture back as Intel HEX (default base F000)");
@@ -257,18 +259,31 @@ static void do_line(void) {
         puts("OK running");
         break;
 
-    case 'g':
+    case 'g': {
         if (!hex_arg(line + 1, &a)) {
             puts("ERR g needs a hex address");
             break;
+        }
+        // "nmi" cannot be mistaken for the address: none of its letters are
+        // hex digits.
+        int32_t nmi_after = -1;
+        const char *n = strstr(line, "nmi");
+        if (n) {
+            uint32_t v;
+            nmi_after = (n[3] == '=' && dec_arg(n + 4, &v)) ? (int32_t)v : 0;
         }
         // In mode 0 the 6301 fetches $FFFE externally for 3 or 4 cycles after
         // RES rises, so patching it here is what makes "go" possible at all.
         mem[0xFFFE] = (uint8_t)(a >> 8);
         mem[0xFFFF] = (uint8_t)a;
-        target_run();
-        printf("OK running from %04X\n", (unsigned)(a & 0xFFFFu));
+        target_run_nmi(nmi_after);
+        if (nmi_after < 0)
+            printf("OK running from %04X\n", (unsigned)(a & 0xFFFFu));
+        else
+            printf("OK running from %04X, NMI after %d bus cycles\n",
+                   (unsigned)(a & 0xFFFFu), (int)nmi_after);
         break;
+    }
 
     case 'k':
         if (!dec_arg(line + 1, &a) || a == 0u) {

@@ -108,7 +108,7 @@ a response and no framing or escaping is needed anywhere.
 | `:...` | Intel HEX record, loaded into emulated memory |
 | `h` | halt — assert RES and hold it |
 | `r` | reset and run from the vector at $FFFE; clears the capture |
-| `g <addr>` | set the vector at $FFFE to `<addr>` (hex), then run |
+| `g <addr> [nmi[=n]]` | set the vector at $FFFE, then run; `nmi` pulses NMI `n` bus cycles after reset (0 = immediately) |
 | `s` | status: state, capture, load totals, UART errors, bus, clock |
 | `d [addr]` | read the capture back as Intel HEX, default base `F000` |
 | `b` | read the capture back as binary after a `LEN <n>` line |
@@ -159,6 +159,43 @@ precisely what the slow-clock experiment wants. That needs the emulator to
 *capture* writes, and it currently does not: the PIO deliberately never drives
 on a write cycle and does not sample one either. Adding it means carrying R/W
 into the captured word so core1 can tell a read request from write data.
+
+## Getting into an HD6301Y0
+
+Mode 0 is an HD6301V1 facility. The Y0 does not appear to expose it, so there
+is no moment when the reset vector is fetched externally and `g` has nothing to
+patch. The way in instead exploits what reset *doesn't* do. Per §2.8 it latches
+the mode bits, loads PC from `$FFFE`, and sets the I bit — and nothing else.
+**The stack pointer survives.**
+
+1. Boot all-external and run a stub that does nothing but `LDS` to an address
+   which will still be external once internal ROM is enabled.
+2. Restrap to internal+external. Keep the clock running and the power up: the
+   core is dynamic, and SP only survives while it is being refreshed.
+3. `g <addr> nmi` — reset, and pulse NMI in the same E cycle it comes out.
+
+The interrupt has to be serviced before the firmware's own `LDS` replaces SP.
+Win that race and the NMI frame is pushed into *emulated* memory rather than
+internal RAM. Control then returns through the firmware's own ISR: its `RTI`
+or `RTS` pulls a return address out of that frame.
+
+**Plant the landing address by filling, not by placing.** You do not know
+whether the ISR ends in `RTI` or `RTS`, how deeply it nested, or where SP
+ended up. Fill the whole stack region with one repeated byte and put the
+dumper at an address whose two bytes are equal — fill `$B0`, enter at
+`$B0B0` — and every one of those unknowns stops mattering. `RTS` pulls two
+`$B0`s, `RTI` pulls seven and still reconstructs the same PC, at any depth and
+any alignment.
+
+With `RTI` that fill byte also becomes the restored **CC**, so it needs **bit 4
+set** or the part resumes with interrupts enabled and the next IRQ vectors
+into firmware you do not control. `$B0`, `$D0` and `$90` are safe; `$C0` is
+not.
+
+**This depends on the emulator never recording writes.** The NMI push lands on
+top of the planted bytes and is discarded, which is the only reason they are
+still there for the `RTI` to pull. It is deliberate, not an omission — see the
+write path in `bus.pio` before changing it.
 
 ## Changing the clock at runtime
 

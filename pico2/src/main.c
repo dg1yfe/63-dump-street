@@ -134,7 +134,18 @@ void target_halt(void) {
     pio_sm_set_consecutive_pindirs(bus_pio, sm_bus, PIN_AD_BASE, 16, false);
 }
 
-void target_run(void) {
+// nmi_after < 0 runs normally. Otherwise NMI is pulsed that many bus cycles
+// after RES rises, 0 meaning the same E cycle - which is the whole point.
+//
+// This is the way into an HD6301Y0, which exposes no mode 0. Reset touches
+// only the mode latch, PC and the I bit (2.8), so the stack pointer set by an
+// earlier all-external boot survives into a boot with internal ROM enabled.
+// Catch the part before its firmware's LDS overwrites SP and the NMI frame
+// lands in emulated memory instead of internal RAM. Control then comes back
+// through the firmware's own ISR: its RTI or RTS pulls a return address out of
+// that frame, and the frame still holds what was planted there because this
+// emulator never writes - see the write path in bus.pio.
+void target_run_nmi(int32_t nmi_after) {
     res_assert();
     pio_sm_set_enabled(bus_pio, sm_bus, false);
     capture_reset();
@@ -197,7 +208,21 @@ void target_run(void) {
     capture_reset();
     rig.uart_framing = 0;
     running = true;
+
+    if (nmi_after >= 0) {
+        // The edge must fall after RES rises. NMI is edge sensitive, so a line
+        // held low across reset offers nothing to latch - which is also why it
+        // idles high from before reset is ever released.
+        if (nmi_after > 0) {
+            uint32_t mark = bus_cycles;
+            while ((uint32_t)(bus_cycles - mark) < (uint32_t)nmi_after)
+                tight_loop_contents();
+        }
+        target_nmi(0);
+    }
 }
+
+void target_run(void) { target_run_nmi(-1); }
 
 bool     target_running(void)  { return running; }
 uint32_t target_bus_cycles(void) { return bus_cycles; }

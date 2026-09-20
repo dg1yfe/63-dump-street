@@ -39,6 +39,13 @@
 ; stay in lockstep with core1's one-in-one-out loop. A write cycle simply
 ; discards it: the 6301 is driving the data bus then, and driving against it
 ; is the one thing that must never happen.
+;
+; Note that writes are not merely un-driven, they are not recorded either -
+; emulated memory is read-only to the target. That is deliberate and it is
+; load bearing. The HD6301Y0 entry (see target_run_nmi in main.c) works by
+; letting an NMI frame be pushed over a planted return address: the push is
+; discarded, the planted bytes remain, and the firmware's own RTI or RTS pulls
+; them and jumps where we want. Making writes land would break that.
 ; ---------------------------------------------------------------------------
 .program bus_slave
 .wrap_target
@@ -55,7 +62,7 @@ top:
     wait 0 gpio PIN_AS      ; address phase over; port 3 becomes the data bus
     pull block              ; core1's answer
     jmp  pin, do_drive      ; JMP_PIN is R/W: high = read
-    jmp  top                ; write cycle: never drive
+    jmp  top                ; write cycle: never drive, never record
 do_drive:
     wait 1 gpio PIN_E       ; data phase
     out  pins, 8            ; data onto GP0-7 before the drivers are enabled

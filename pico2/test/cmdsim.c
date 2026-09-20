@@ -15,7 +15,13 @@
 static bool running_flag;
 
 void target_halt(void)    { running_flag = false; }
-void target_run(void)     { running_flag = true; capture_reset(); }
+
+void target_run_nmi(int32_t nmi_after) {
+    running_flag = true;
+    capture_reset();
+    if (nmi_after >= 0) rig.nmi_count++;
+}
+void target_run(void) { target_run_nmi(-1); }
 bool target_running(void) { return running_flag; }
 
 // The diagnostics touch hardware, so off-target they are stubs - the protocol
