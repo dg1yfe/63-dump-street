@@ -1,6 +1,11 @@
 import os, termios, time, select, re
 
-DEV = "/dev/cu.usbmodem11101"
+import glob
+def _find():
+    d = sorted(glob.glob("/dev/cu.usbmodem*"))
+    if not d: raise FileNotFoundError("no /dev/cu.usbmodem* - is the Pico attached?")
+    return d[0]
+DEV = _find()
 
 class Rig:
     def __init__(self, dev=DEV):
