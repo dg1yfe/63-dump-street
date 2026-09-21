@@ -28,6 +28,7 @@ bool target_running(void) { return running_flag; }
 // tests exercise the parser and the read-back formats, not the instruments.
 void target_pin_survey(void) { puts("survey   (not available off-target)"); }
 void target_trace(void)      { puts("trace    (not available off-target)"); }
+void target_trace_arm(uint16_t addr) { (void)addr; }
 
 uint32_t target_bus_cycles(void) { return 0; }
 uint16_t target_last_addr(void)  { return 0; }

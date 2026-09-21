@@ -48,6 +48,7 @@ static volatile uint16_t last_addr;    // ditto: where the target last looked
 static volatile uint16_t trace_buf[TRACE_N];
 static volatile uint16_t trace_len;
 static volatile bool     trace_armed;
+static volatile uint16_t trace_trig;   // address that starts recording, set by `w`
 
 static uint32_t        as_mark;
 static absolute_time_t as_deadline;
@@ -81,7 +82,7 @@ static void __not_in_flash_func(core1_main)(void) {
             pio_sm_put(bus_pio, sm_bus, mem[a & 0xFFFFu]);
             last_addr = (uint16_t)a;
             bus_cycles++;
-            if (trace_armed && (uint16_t)a == 0x00FFu) trace_armed = false;
+            if (trace_armed && (uint16_t)a == trace_trig) trace_armed = false;
             if (!trace_armed && trace_len < TRACE_N)
                 trace_buf[trace_len++] = (uint16_t)a;
         }
@@ -184,6 +185,25 @@ void target_run_nmi(int32_t nmi_after) {
         pio_sm_exec(bus_pio, sm_bus, pio_encode_jmp(off_bus));
         pio_sm_set_enabled(bus_pio, sm_bus, true);
 
+        // NMI here, inside the loop and immediately after the release - not
+        // after it, where this used to sit. The whole point is to be serviced
+        // before the target's own firmware executes its LDS and replaces the
+        // stack pointer, and that window is a handful of instructions wide.
+        // Firing after the retry loop put the edge 2 ms late, which on a 250
+        // kHz E clock is five hundred bus cycles after the race was over.
+        //
+        // The bus is started first regardless: the vector fetch comes within
+        // 3 or 4 cycles of RES rising and must be answered, and the state
+        // machine takes about a microsecond to arm.
+        if (nmi_after >= 0) {
+            if (nmi_after > 0) {
+                uint32_t mark = bus_cycles;
+                while ((uint32_t)(bus_cycles - mark) < (uint32_t)nmi_after)
+                    tight_loop_contents();
+            }
+            target_nmi(0);
+        }
+
         // Checking merely for bus activity is not enough: a target that booted
         // its own ROM instead of ours is busy too. Look for the entry address
         // itself in the trace - that only appears if the external vector fetch
@@ -208,18 +228,6 @@ void target_run_nmi(int32_t nmi_after) {
     capture_reset();
     rig.uart_framing = 0;
     running = true;
-
-    if (nmi_after >= 0) {
-        // The edge must fall after RES rises. NMI is edge sensitive, so a line
-        // held low across reset offers nothing to latch - which is also why it
-        // idles high from before reset is ever released.
-        if (nmi_after > 0) {
-            uint32_t mark = bus_cycles;
-            while ((uint32_t)(bus_cycles - mark) < (uint32_t)nmi_after)
-                tight_loop_contents();
-        }
-        target_nmi(0);
-    }
 }
 
 void target_run(void) { target_run_nmi(-1); }
@@ -337,6 +345,16 @@ void target_pin_survey(void) {
                (unsigned)(100u * high / (N - 1)),
                (unsigned)(edges * 500u / us));
     }
+}
+
+// Arm the trace to start recording when a given address appears, instead of
+// recording from reset. The interesting cycles are not always the first ones:
+// an NMI frame pushed at a planted stack pointer lands long after the 256-entry
+// window has filled.
+void target_trace_arm(uint16_t addr) {
+    trace_len = 0;
+    trace_trig = addr;
+    trace_armed = true;
 }
 
 void target_trace(void) {

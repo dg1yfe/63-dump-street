@@ -225,6 +225,7 @@ static void help(void) {
     puts("          NMI <n> bus cycles after reset (0 = immediately)");
     puts("s         status");
     puts("t         survey what the input pins are actually doing");
+    puts("w <addr>  arm the trace to start recording at <addr>");
     puts("d [addr]  read the capture back as Intel HEX (default base F000)");
     puts("b         read the capture back as binary after a LEN <n> line");
     puts("c         clear the capture buffer");
@@ -303,6 +304,12 @@ static void do_line(void) {
     }
 
     case 't': target_pin_survey(); break;
+    case 'w':
+        if (!hex_arg(line + 1, &a)) { puts("ERR w needs a hex address"); break; }
+        target_trace_arm((uint16_t)a);
+        printf("OK trace armed on %04X\n", (unsigned)(a & 0xFFFFu));
+        break;
+
     case 'T': target_trace(); break;
 
     case 's': status(); break;

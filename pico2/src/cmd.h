@@ -34,6 +34,7 @@ uint16_t target_last_addr(void);
 uint32_t target_nmi(uint32_t e_cycles);   // returns the pulse width in us
 void     target_pin_survey(void);          // measure what the input pins are doing
 void     target_trace(void);               // addresses around an interrupt frame
+void     target_trace_arm(uint16_t addr);  // start the trace at this address
 
 void cmd_init(void);
 void cmd_feed(uint8_t ch);
