@@ -1,35 +1,15 @@
 # Open items
 
-## When you reassemble the fixture
+## NMI hostile-handler detector — verified
 
-The fixture was taken apart after the second ROM dump. These need the board
-back together, an HD6301 in the socket, and the Pico on USB. Everything below
-is verification that is written and builds but has not been run on hardware.
+Done. `g <addr> nmi` classifies the target's NMI handler: CAPTURED (handler kept
+control), REACHED (returned to the injected entry), or NOT TAKEN ($FFFC never
+fetched). Confirmed live on the EZA9 mask ROM, which reports CAPTURED — its
+handler runs `LDS #$00FF` first and never returns through the stack.
 
-1. Reflash and confirm it enumerates. `HD6301Y0-dev` carries the NMI work.
-   ```
-   cd pico2 && cmake --build build
-   picotool load -f -x build/src/hd6301dump.uf2      # ~/.pico-sdk/.../picotool
-   ```
-   The port may come back as `usbmodem1101` or `usbmodem11101`; `host/rig.py`
-   globs for it now, so that no longer matters.
-
-2. Confirm a clean dump still works, as a baseline:
-   `python3 host/rig.py`-driven `g c000`, expect 4096 bytes, sha256 `6321af44`,
-   `restart 0`, zero framing errors.
-
-3. **Verify the hostile-handler detector (commit eba9c69, unrun).** This is the
-   one piece committed without a hardware run.
-   - Load `6301/test/sptest.hex`, `g c000` to plant SP = $B0B0, then
-     `g c010 nmi`.
-   - Wait past the 500 ms watch window, then `s`.
-   - Expect the line `nmi-entry captured (handler kept control)` — the EZA9
-     handler resets SP with `LDS #$00FF` and loops, so it must classify as
-     CAPTURED. If it says "not taken", the NMI edge was not seen (check the
-     NMI wiring, GP22 -> pin 4). If it says "reached entry", the handler came
-     back via a reset (Port 1 bit 1 toggling) - real, but not the expected
-     path; note it and look at the trace.
-   - Push `HD6301Y0-dev` once the classification is confirmed.
+Only CAPTURED and the idle-clear case are exercisable on this hardware. REACHED
+needs a cooperative handler and NOT TAKEN needs NMI unwired, neither reachable
+with a fixed hostile mask ROM whose NMI vector is internal.
 
 ## Part 1 (`6301/`)
 
