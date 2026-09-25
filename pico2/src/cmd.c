@@ -198,6 +198,13 @@ static void status(void) {
            rig.as_seen ? "active" : "no activity",
            (unsigned)target_bus_cycles(), (unsigned)target_last_addr());
     printf("nmi      %u issued\n", (unsigned)rig.nmi_count);
+    if (rig.nmi_outcome != NMI_IDLE) {
+        const char *o = rig.nmi_outcome == NMI_PENDING   ? "watching"
+                      : rig.nmi_outcome == NMI_NO_VECTOR  ? "not taken ($FFFC never fetched)"
+                      : rig.nmi_outcome == NMI_REACHED    ? "reached entry (handler returned)"
+                      :                                     "captured (handler kept control)";
+        printf("nmi-entry %s\n", o);
+    }
     printf("restart  %u resets had to be repeated\n", (unsigned)rig.restarts);
     // The achieved rate, not the requested one: everything downstream depends
     // on it, and a divisor that did not come out exact shows up here.

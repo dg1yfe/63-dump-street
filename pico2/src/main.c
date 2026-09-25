@@ -30,6 +30,7 @@
 #define RESET_PULSE_MS        1    // 2.8 wants 3 E cycles (12 us) to re-reset
 #define AS_TIMEOUT_MS       200
 #define NMI_CYCLES_DEFAULT    4    // E cycles to hold NMI low
+#define NMI_WATCH_MS        500    // how long to wait for the handler to return
 
 static PIO  bus_pio = pio0;
 static uint sm_clk, sm_bus;
@@ -53,6 +54,18 @@ static volatile uint16_t trace_trig;   // address that starts recording, set by 
 static uint32_t        as_mark;
 static absolute_time_t as_deadline;
 static bool            as_pending;
+
+// Hostile-handler watch. After an NMI entry, does control ever come back to the
+// address we injected, or does the target's own handler keep it? The vector
+// fetch at $FFFC is the unambiguous "NMI taken" marker - nothing else reads it
+// - and the entry address reappearing AFTER that marker is "handler returned to
+// us". A handler that re-points SP and loops (the EZA9 programming monitor does
+// exactly this) never reaches the entry again, and the window expires CAPTURED.
+static volatile bool     nmi_watch;
+static volatile uint16_t nmi_watch_addr;
+static volatile bool     nmi_vector_seen;
+static volatile bool     nmi_reached;
+static absolute_time_t   nmi_deadline;
 
 // --- core1: answer bus cycles -----------------------------------------------
 //
@@ -85,6 +98,11 @@ static void __not_in_flash_func(core1_main)(void) {
             if (trace_armed && (uint16_t)a == trace_trig) trace_armed = false;
             if (!trace_armed && trace_len < TRACE_N)
                 trace_buf[trace_len++] = (uint16_t)a;
+            if (nmi_watch) {
+                if ((uint16_t)a == 0xFFFCu) nmi_vector_seen = true;
+                else if (nmi_vector_seen && (uint16_t)a == nmi_watch_addr)
+                    nmi_reached = true;
+            }
         }
     }
 }
@@ -147,6 +165,8 @@ void target_halt(void) {
 // that frame, and the frame still holds what was planted there because this
 // emulator never writes - see the write path in bus.pio.
 void target_run_nmi(int32_t nmi_after) {
+    nmi_watch = false;
+    rig.nmi_outcome = NMI_IDLE;
     res_assert();
     pio_sm_set_enabled(bus_pio, sm_bus, false);
     capture_reset();
@@ -159,6 +179,20 @@ void target_run_nmi(int32_t nmi_after) {
     as_mark    = bus_cycles;
     as_deadline = make_timeout_time_ms(AS_TIMEOUT_MS);
     as_pending = true;
+
+    // Arm the hostile-handler watch here, before the loop - the NMI fires
+    // inside it and the $FFFC vector fetch follows within microseconds, so a
+    // watch armed after the loop (2 ms later) would always miss it. The
+    // entry-reached half is gated on having seen $FFFC, so arming this early
+    // does not let a pre-NMI entry fetch count. The deadline is set after the
+    // loop, when the target is confirmed running.
+    if (nmi_after >= 0) {
+        nmi_watch_addr  = (uint16_t)((mem[0xFFFEu] << 8) | mem[0xFFFFu]);
+        nmi_vector_seen = false;
+        nmi_reached     = false;
+        rig.nmi_outcome = NMI_PENDING;
+        nmi_watch       = true;
+    }
 
     // Release RES first, then start the bus - in that order, and inline rather
     // than through core1, to keep the gap to a microsecond or so.
@@ -228,6 +262,11 @@ void target_run_nmi(int32_t nmi_after) {
     capture_reset();
     rig.uart_framing = 0;
     running = true;
+
+    // The watch was armed before the loop so it caught the $FFFC vector fetch;
+    // start its deadline now that the target is confirmed running.
+    if (nmi_watch)
+        nmi_deadline = make_timeout_time_ms(NMI_WATCH_MS);
 }
 
 void target_run(void) { target_run_nmi(-1); }
@@ -442,6 +481,13 @@ int main(void) {
         int c;
         while ((c = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT)
             cmd_feed((uint8_t)c);
+
+        if (nmi_watch && time_reached(nmi_deadline)) {
+            nmi_watch = false;
+            rig.nmi_outcome = !nmi_vector_seen ? NMI_NO_VECTOR
+                            : nmi_reached      ? NMI_REACHED
+                            :                    NMI_CAPTURED;
+        }
 
         if (as_pending && time_reached(as_deadline)) {
             as_pending  = false;

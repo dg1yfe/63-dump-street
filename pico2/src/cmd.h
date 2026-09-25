@@ -19,7 +19,15 @@ typedef struct {
     bool     sci_clamped;   // the UART could not reach the rate E/16 implies
     uint32_t nmi_count;     // NMI pulses issued since power-on
     uint32_t restarts;      // resets that had to be repeated to take
+    uint8_t  nmi_outcome;   // result of the last g-nmi: see NMI_* below
 } rig_stats_t;
+
+// What became of the target after an NMI entry attempt.
+#define NMI_IDLE        0   // no NMI entry since the last plain run
+#define NMI_PENDING     1   // fired, still inside the observation window
+#define NMI_NO_VECTOR   2   // $FFFC never fetched - the pulse was not taken
+#define NMI_REACHED     3   // execution returned to the entry after the vector
+#define NMI_CAPTURED    4   // vector taken, entry never reached again
 
 extern rig_stats_t rig;
 
